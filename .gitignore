@@ -36,6 +36,7 @@ venv.bak/
 # IDE
 .vscode/
 .idea/
+.codebuddy/
 *.swp
 *.swo
 *~
