@@ -24,7 +24,7 @@ def create_PS(omega_m0, w0, kmax, verbose=False, params=None, method="CAMB", kmi
       As: As_target (only be valid when using CAMB)
     """
     if not HAS_COLIBRI:
-        raise ImportError("colibri package is required for create_PS. Install with: pip install nbody_help[cosmo]")
+        raise ImportError("colibri package is required for create_PS. Install from source: git clone https://github.com/GabrieleParimbelli/COLIBRI.git && cd COLIBRI && pip install .")
     if params is None:
         cosmo = Planck13
         params = {
