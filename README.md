@@ -42,8 +42,30 @@ Required:
 - numpy
 - astropy
 
-Optional:
-- colibri (for power spectrum computation, install with `pip install nbody_help[cosmo]`)
+Optional (for power spectrum computation):
+- **colibri** - Must be installed from source. See [Installation from Source](#colibri-installation) below.
+
+## Colibri Installation
+
+The `create_PS` function requires the `colibri` package, which is not available on PyPI. You must install it from source:
+
+```bash
+# Clone the colibri repository
+git clone https://github.com/GabrieleParimbelli/COLIBRI.git
+cd COLIBRI
+
+# Install from source
+pip install .
+```
+
+After installing colibri, you can use the power spectrum computation features:
+
+```python
+from nbody_help import create_PS
+
+# Create power spectrum using CAMB or CLASSY
+ps = create_PS(omega_m0=0.3, w0=-1.0, kmax=10.0, method='CAMB')
+```
 
 ## License
 
