@@ -5,14 +5,14 @@ boxsize = 800.0
 random_seed= 1111
 nrealization= 1   -- multiple realisations for random_seed, random_seed+1, ...
 
-ntimestep= 30
+ntimestep= 15
 a_final= 1.0
-output_redshifts= {1.0, 0.6069, 0.0}  -- redshifts of output
+output_redshifts= {1.0, 0.5, 0.0}  -- redshifts of output
 
-omega_m = 0.3071
-h       = 0.6777
-sigma8  = 0.8288
-de_w = -1.0
+omega_m = 0.3111  -- Omega_m (Planck 2018)
+h       = 0.6766  -- h (Planck 2018)
+sigma8  = 0.8102  -- sigma8 (Planck 2018)
+de_w = -1.0  -- Dark Energy equation of state parameter
 
 pm_nc_factor= 3            -- Particle Mesh grid pm_nc_factor*nc per dimension
 np_alloc_factor= 1.2      -- Amount of memory allocated for particle
