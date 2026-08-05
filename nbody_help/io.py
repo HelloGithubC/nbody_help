@@ -67,49 +67,43 @@ def analyze_float_format(s):
     return value, format_spec
     
 
-def read_gadget2(filename=None, filenames_list=None, use_long_int=False, only_pos=False, sub_rate=1.0, show_progress=False):
-    if filename is None and filenames_list is None:
-        raise ValueError("Either filename or filenames_list must be provided")
-    if filename is not None:
-        filenames_list = [filename, ]
+def _read_single_gadget2_file(args):
+    """Read a single gadget2 file. This function is designed to be called in parallel.
     
-    headers_array = np.empty(len(filenames_list), dtype=gadget2_header_dtype)
-    pos_list = []
-    vel_list = []
-    id_list = []
-
-    if show_progress:
-        import tqdm 
-        iterator = tqdm.tqdm(enumerate(filenames_list), total=len(filenames_list), desc="Reading gadget2")
-    else:
-        iterator = enumerate(filenames_list)
-
-    for i, filename in iterator:
-        f = open(filename, "rb")
+    Args:
+        args: Tuple of (filename, use_long_int, only_pos, sub_rate, file_index)
+    
+    Returns:
+        Tuple of (file_index, header, pos, vel, id)
+    """
+    filename, use_long_int, only_pos, sub_rate, file_index = args
+    
+    f = open(filename, "rb")
+    try:
         header_flag_1 = np.fromfile(f, dtype=np.int32, count=1)[0]
-        headers_array[i] = np.fromfile(f, dtype=gadget2_header_dtype, count=1)[0]
+        header = np.fromfile(f, dtype=gadget2_header_dtype, count=1)[0]
         header_flag_2 = np.fromfile(f, dtype=np.int32, count=1)[0]
         if header_flag_1 != header_flag_2:
-            raise ValueError(f"file {filename} is not a gadget2 snapshot(header_flag not consistent)")
-        npar = headers_array[i]["np"][1]
+            raise ValueError(f"file {filename} is not a gadget2 snapshot(header_flag not consistent: {header_flag_1} != {header_flag_2})")
+        npar = header["np"][1]
         pos_flag_1 = np.fromfile(f, dtype=np.int32, count=1)[0]
         pos_temp = np.fromfile(f, dtype=np.float32, count=npar*3).reshape(npar, 3)
         pos_flag_2 = np.fromfile(f, dtype=np.int32, count=1)[0]
         if pos_flag_1 != pos_flag_2:
-            raise ValueError(f"file {filename} is not a gadget2 snapshot(pos_flag not consistent)")
+            raise ValueError(f"file {filename} is not a gadget2 snapshot(pos_flag not consistent: {pos_flag_1} != {pos_flag_2})")
         if not only_pos:
             vel_flag_1 = np.fromfile(f, dtype=np.int32, count=1)[0]
             vel_temp = np.fromfile(f, dtype=np.float32, count=npar*3).reshape(npar, 3)
             vel_flag_2 = np.fromfile(f, dtype=np.int32, count=1)[0]
             if vel_flag_1 != vel_flag_2:
-                raise ValueError(f"file {filename} is not a gadget2 snapshot(vel_flag not consistent)")
+                raise ValueError(f"file {filename} is not a gadget2 snapshot(vel_flag not consistent: {vel_flag_1} != {vel_flag_2})")
             id_flag_1 = np.fromfile(f, dtype=np.int32, count=1)[0]
             id_temp = np.fromfile(f, dtype=np.uint64 if use_long_int else np.uint32, count=npar)
             id_flag_2 = np.fromfile(f, dtype=np.int32, count=1)[0]
             if id_flag_1 != id_flag_2:
-                raise ValueError(f"file {filename} is not a gadget2 snapshot(id_flag not consistent)")
+                raise ValueError(f"file {filename} is not a gadget2 snapshot(id_flag not consistent: {id_flag_1} != {id_flag_2})")
         else:
-            vel_temp = None 
+            vel_temp = None
             id_temp = None
 
         if sub_rate < 1.0:
@@ -119,10 +113,136 @@ def read_gadget2(filename=None, filenames_list=None, use_long_int=False, only_po
                 vel_temp = vel_temp[index_choose]
                 id_temp = id_temp[index_choose]
         
-        pos_list.append(pos_temp)
-        vel_list.append(vel_temp)
-        id_list.append(id_temp)
+        return (file_index, header, pos_temp, vel_temp, id_temp)
+    finally:
+        f.close()
+
+
+def read_gadget2(filename=None, filenames_list=None, use_long_int=False, only_pos=False, sub_rate=1.0, show_progress=False, nthreads=1):
+    """Read gadget2 snapshot files.
     
+    Args:
+        filename: Single filename (mutually exclusive with filenames_list)
+        filenames_list: List of filenames to read
+        use_long_int: If True, use int64 for particle IDs
+        only_pos: If True, only read positions (skip velocity and ID)
+        sub_rate: Subsampling rate (0.0 to 1.0). If < 1.0, randomly sample particles
+        show_progress: If True, show progress bar (only for single-threaded mode)
+        nthreads: Number of threads for parallel reading. Default is 1 (sequential)
+    """
+    if filename is None and filenames_list is None:
+        raise ValueError("Either filename or filenames_list must be provided")
+    if filename is not None:
+        filenames_list = [filename, ]
+    
+    num_files = len(filenames_list)
+    
+    # Force single-threaded when only one file to avoid thread overhead
+    if num_files <= 1:
+        nthreads = 1
+    
+    # Single-threaded mode (original behavior)
+    if nthreads <= 1:
+        headers_array = np.empty(num_files, dtype=gadget2_header_dtype)
+        pos_list = []
+        vel_list = []
+        id_list = []
+
+        if show_progress:
+            import tqdm 
+            iterator = tqdm.tqdm(enumerate(filenames_list), total=num_files, desc="Reading gadget2")
+        else:
+            iterator = enumerate(filenames_list)
+
+        for i, fname in iterator:
+            f = open(fname, "rb")
+            header_flag_1 = np.fromfile(f, dtype=np.int32, count=1)[0]
+            headers_array[i] = np.fromfile(f, dtype=gadget2_header_dtype, count=1)[0]
+            header_flag_2 = np.fromfile(f, dtype=np.int32, count=1)[0]
+            if header_flag_1 != header_flag_2:
+                raise ValueError(f"file {fname} is not a gadget2 snapshot(header_flag not consistent: {header_flag_1} != {header_flag_2})")
+            npar = headers_array[i]["np"][1]
+            pos_flag_1 = np.fromfile(f, dtype=np.int32, count=1)[0]
+            pos_temp = np.fromfile(f, dtype=np.float32, count=npar*3).reshape(npar, 3)
+            pos_flag_2 = np.fromfile(f, dtype=np.int32, count=1)[0]
+            if pos_flag_1 != pos_flag_2:
+                raise ValueError(f"file {fname} is not a gadget2 snapshot(pos_flag not consistent: {pos_flag_1} != {pos_flag_2})")
+            if not only_pos:
+                vel_flag_1 = np.fromfile(f, dtype=np.int32, count=1)[0]
+                vel_temp = np.fromfile(f, dtype=np.float32, count=npar*3).reshape(npar, 3)
+                vel_flag_2 = np.fromfile(f, dtype=np.int32, count=1)[0]
+                if vel_flag_1 != vel_flag_2:
+                    raise ValueError(f"file {fname} is not a gadget2 snapshot(vel_flag not consistent: {vel_flag_1} != {vel_flag_2})")
+                id_flag_1 = np.fromfile(f, dtype=np.int32, count=1)[0]
+                id_temp = np.fromfile(f, dtype=np.uint64 if use_long_int else np.uint32, count=npar)
+                id_flag_2 = np.fromfile(f, dtype=np.int32, count=1)[0]
+                if id_flag_1 != id_flag_2:
+                    raise ValueError(f"file {fname} is not a gadget2 snapshot(id_flag not consistent: {id_flag_1} != {id_flag_2})")
+            else:
+                vel_temp = None 
+                id_temp = None
+
+            if sub_rate < 1.0:
+                index_choose = np.random.choice(npar, int(npar*sub_rate), replace=False)
+                pos_temp = pos_temp[index_choose]
+                if not only_pos:
+                    vel_temp = vel_temp[index_choose]
+                    id_temp = id_temp[index_choose]
+            
+            pos_list.append(pos_temp)
+            vel_list.append(vel_temp)
+            id_list.append(id_temp)
+        
+        pos_array = np.concatenate(pos_list, axis=0)
+        if not only_pos:
+            vel_array = np.concatenate(vel_list, axis=0)
+            id_array = np.concatenate(id_list, axis=0)
+        else:
+            vel_array = None 
+            id_array = None
+        if headers_array.shape[0] == 1:
+            headers_array = headers_array[0]
+        
+        return {
+            "pos": pos_array,
+            "vel": vel_array,
+            "id": id_array,
+            "header": headers_array,
+        }
+    
+    # Multi-threaded mode
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    
+    # Prepare arguments for each file
+    args_list = [(fn, use_long_int, only_pos, sub_rate, i) for i, fn in enumerate(filenames_list)]
+    
+    # Initialize result arrays
+    headers_array = np.empty(num_files, dtype=gadget2_header_dtype)
+    pos_list = [None] * num_files
+    vel_list = [None] * num_files
+    id_list = [None] * num_files
+    
+    # Use ThreadPoolExecutor for parallel reading
+    # Note: GIL is released during I/O operations, so threads provide speedup for I/O-bound tasks
+    with ThreadPoolExecutor(max_workers=nthreads) as executor:
+        # Submit all tasks
+        future_to_idx = {executor.submit(_read_single_gadget2_file, args): args[4] for args in args_list}
+        
+        # Collect results with optional progress bar
+        if show_progress:
+            import tqdm
+            futures = tqdm.tqdm(as_completed(future_to_idx), total=num_files, desc="Reading gadget2")
+        else:
+            futures = as_completed(future_to_idx)
+        
+        for future in futures:
+            file_idx, header, pos, vel, ids = future.result()
+            headers_array[file_idx] = header
+            pos_list[file_idx] = pos
+            vel_list[file_idx] = vel
+            id_list[file_idx] = ids
+    
+    # Concatenate results in order
     pos_array = np.concatenate(pos_list, axis=0)
     if not only_pos:
         vel_array = np.concatenate(vel_list, axis=0)
@@ -130,6 +250,7 @@ def read_gadget2(filename=None, filenames_list=None, use_long_int=False, only_po
     else:
         vel_array = None
         id_array = None
+    
     if headers_array.shape[0] == 1:
         headers_array = headers_array[0]
     

@@ -127,6 +127,16 @@ def create_PS(omega_m0, w0, kmax, verbose=False, params=None, method="CAMB", kmi
     }
 
 ## Read and write parameter files (Only support lua format if the simulation supports, or txt format)
+class LuaIdentifier(str):
+    """Marker type for values that are variable references or raw expressions
+    in parameter files (e.g. `particle_Npart_1D` or `particle_Npart_1D * 3`).
+
+    Such values must be written back WITHOUT quotes so that the target program
+    resolves them as variables instead of literal strings.  This class
+    subclasses `str`, so existing code treating these values as plain strings
+    keeps working.
+    """
+
 def read_params_lua(filename: str):
     """ 读取 lua 格式配置文件。
 
@@ -157,10 +167,22 @@ def read_params_lua(filename: str):
             if re.match(r"^\{.*\}$", value):
                 # 去掉花括号并按逗号分
                 inner = value.strip("{}").strip()
-                # 转换数字 & 保留字符串
+                # 转换数字 & 保留字符串 & 区分变量名
                 list_vals = []
                 for v in inner.split(","):
                     v = v.strip()
+                    # 带引号的字符串 -> 去掉引号，作为普通 str
+                    if (v.startswith('"') and v.endswith('"')) or \
+                       (v.startswith("'") and v.endswith("'")):
+                        list_vals.append(v[1:-1])
+                        continue
+                    # 布尔
+                    if v.lower() == "true":
+                        list_vals.append(True)
+                        continue
+                    if v.lower() == "false":
+                        list_vals.append(False)
+                        continue
                     try:
                         # 尝试转数字 (int/float)
                         if "." in v:
@@ -168,10 +190,11 @@ def read_params_lua(filename: str):
                         else:
                             list_vals.append(int(v))
                     except ValueError:
-                        list_vals.append(v)
+                        # 无法解析的，视为 Lua 变量名/表达式
+                        list_vals.append(LuaIdentifier(v))
                 params[key] = list(list_vals)
             else:
-                # 转换常规 value (数字/true/false/字符串)
+                # 转换常规 value (数字/true/false/字符串/变量名)
                 v = value.strip()
                 # 布尔
                 if v.lower() == "true":
@@ -190,8 +213,13 @@ def read_params_lua(filename: str):
                                 params[key] = eval_value
                         if isinstance(eval_value, str):
                             params[key] = eval_value.strip()
+                        # 其他字面量（如 None）原样保留
+                        if eval_value is None:
+                            params[key] = None
                     except Exception:
-                        params[key] = v  # 无法解析的，原样保留为字符串
+                        # 非 Python 字面量：视为 Lua 变量名/表达式（如 particle_Npart_1D、
+                        # particle_Npart_1D * 3），写回时不加引号
+                        params[key] = LuaIdentifier(v)
 
     return params, formats
 
@@ -208,11 +236,18 @@ def write_params_lua(params: dict, filename: str, formats: dict = None):
         formats = {}
 
     def format_value(v, fmt=None):
+        # Lua 变量/表达式（如 particle_Npart_1D、particle_Npart_1D * 3）：原样写出，不加引号
+        if isinstance(v, LuaIdentifier):
+            return str(v)
         # list -> {a, b, c}（仅支持单行 table）
         if isinstance(v, list):
             items = []
             for x in v:
-                if isinstance(x, (int, float)):
+                if isinstance(x, LuaIdentifier):
+                    items.append(str(x))
+                elif isinstance(x, bool):
+                    items.append("true" if x else "false")
+                elif isinstance(x, (int, float)):
                     items.append(str(x))
                 else:
                     items.append(f'"{x}"')
@@ -286,7 +321,8 @@ def read_params_txt(filepath, comment_char="%", sep=None):
                         else:
                             params[key] = v.strip('"')
                     except Exception:
-                        params[key] = v
+                        # 非 Python 字面量：视为变量名/表达式，写回时不加引号
+                        params[key] = LuaIdentifier(v)
             # 其他情况忽略（比如纯注释行）
 
     return params, formats
@@ -301,6 +337,9 @@ def write_params_txt(params, filepath, formats=None, sep=None, str_no_quote=Fals
     if sep is None:
         sep = " " * 8
     def format_value(v, fmt=None):
+        # 变量/表达式（如 NULL、未加引号的路径）：原样写出，不加引号
+        if isinstance(v, LuaIdentifier):
+            return str(v)
         # boolean -> true / false
         if isinstance(v, bool):
             return "true" if v else "false"

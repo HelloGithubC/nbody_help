@@ -38,6 +38,7 @@ output_folder = "/Your/dir/to/output/"
 output_redshifts = {1.0, 0.0}
 output_particles = true
 output_fileformat = "GADGET"
+output_gadget_long_ids = true
 fof = false
 pofk = false
 -- pofk_nmesh = particle_Npart_1D
